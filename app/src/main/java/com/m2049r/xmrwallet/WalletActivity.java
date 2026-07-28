@@ -24,6 +24,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -37,6 +38,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AlertDialog;
@@ -63,13 +65,18 @@ import com.m2049r.xmrwallet.model.TransactionInfo;
 import com.m2049r.xmrwallet.model.Wallet;
 import com.m2049r.xmrwallet.model.WalletManager;
 import com.m2049r.xmrwallet.service.WalletService;
+import com.m2049r.xmrwallet.util.FeatherCsvTxNotes;
 import com.m2049r.xmrwallet.util.Helper;
 import com.m2049r.xmrwallet.util.MoneroThreadPoolExecutor;
 import com.m2049r.xmrwallet.util.ThemeHelper;
 import com.m2049r.xmrwallet.widget.Toolbar;
 
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import lombok.Getter;
 import timber.log.Timber;
@@ -93,6 +100,7 @@ public class WalletActivity extends BaseActivity implements WalletFragment.Liste
     public static final String REQUEST_STREETMODE = "streetmode";
     public static final String REQUEST_URI = "uri";
     public static final String REQUEST_SIDEKICK = "sidekick";
+    private static final int IMPORT_FEATHER_NOTES_INTENT = 1201;
 
     private NavigationView accountsView;
     private DrawerLayout drawer;
@@ -265,6 +273,8 @@ public class WalletActivity extends BaseActivity implements WalletFragment.Liste
         final int itemId = item.getItemId();
         if (itemId == R.id.action_rescan) {
             onWalletRescan();
+        } else if (itemId == R.id.action_import_feather_notes) {
+            onImportFeatherNotes();
         } else if (itemId == R.id.action_info) {
             onWalletDetails();
         } else if (itemId == R.id.action_share) {
@@ -294,6 +304,114 @@ public class WalletActivity extends BaseActivity implements WalletFragment.Liste
         } else
             return super.onOptionsItemSelected(item);
         return true;
+    }
+
+    private void onImportFeatherNotes() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "text/*",
+                "text/csv",
+                "application/csv",
+                "application/vnd.ms-excel"
+        });
+        startActivityForResult(intent, IMPORT_FEATHER_NOTES_INTENT);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == IMPORT_FEATHER_NOTES_INTENT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                new AsyncImportFeatherNotes(data.getData())
+                        .executeOnExecutor(MoneroThreadPoolExecutor.MONERO_THREAD_POOL_EXECUTOR);
+            }
+        }
+    }
+
+    private static class ImportFeatherNotesResult {
+        final int imported;
+        final Exception error;
+
+        ImportFeatherNotesResult(int imported, Exception error) {
+            this.imported = imported;
+            this.error = error;
+        }
+    }
+
+    @SuppressLint("StaticFieldLeak")
+    private class AsyncImportFeatherNotes extends AsyncTask<Void, Void, ImportFeatherNotesResult> {
+        private final Uri csvUri;
+
+        AsyncImportFeatherNotes(Uri csvUri) {
+            this.csvUri = csvUri;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            super.onPreExecute();
+            showProgressDialog(R.string.menu_import_feather_notes);
+        }
+
+        @Override
+        protected ImportFeatherNotesResult doInBackground(Void... params) {
+            try (InputStream inputStream = getContentResolver().openInputStream(csvUri)) {
+                if (inputStream == null) {
+                    throw new IllegalArgumentException("Selected file could not be opened");
+                }
+                FeatherCsvTxNotes.Result result = new FeatherCsvTxNotes()
+                        .parse(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+                int imported = importFeatherNotes(result.notes);
+                if (imported > 0) {
+                    saveWallet();
+                    getWallet().refreshHistory();
+                }
+                return new ImportFeatherNotesResult(imported, null);
+            } catch (Exception e) {
+                return new ImportFeatherNotesResult(0, e);
+            }
+        }
+
+        private int importFeatherNotes(Map<String, String> notes) {
+            int imported = 0;
+            Wallet wallet = getWallet();
+            for (Map.Entry<String, String> entry : notes.entrySet()) {
+                String existingTxNotes = wallet.getUserNote(entry.getKey());
+                UserNotes userNotes = new UserNotes(existingTxNotes);
+                userNotes.setNote(entry.getValue());
+                if (wallet.setUserNote(entry.getKey(), userNotes.txNotes)) {
+                    imported++;
+                }
+            }
+            return imported;
+        }
+
+        @Override
+        protected void onPostExecute(ImportFeatherNotesResult result) {
+            super.onPostExecute(result);
+            dismissProgressDialog();
+            if (result.error != null) {
+                String message = result.error.getLocalizedMessage();
+                if (message == null) {
+                    message = result.error.getClass().getSimpleName();
+                }
+                Toast.makeText(WalletActivity.this,
+                        getString(R.string.import_feather_notes_error, message),
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (result.imported > 0) {
+                forceUpdate();
+                Toast.makeText(WalletActivity.this,
+                        getString(R.string.import_feather_notes_success, result.imported),
+                        Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(WalletActivity.this,
+                        getString(R.string.import_feather_notes_none),
+                        Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void updateStreetMode() {

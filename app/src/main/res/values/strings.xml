@@ -263,6 +263,10 @@
     <string name="tx_notes">Notes</string>
     <string name="tx_notes_hint">(optional)</string>
     <string name="tx_title">Transaction Details</string>
+    <string name="menu_import_feather_notes">Import Feather CSV notes</string>
+    <string name="import_feather_notes_success">Imported %1$d transaction notes</string>
+    <string name="import_feather_notes_none">No matching transaction notes found</string>
+    <string name="import_feather_notes_error">Could not import Feather CSV: %1$s</string>
 
     <string name="tx_pending">PENDING</string>
     <string name="tx_failed">FAILED</string>

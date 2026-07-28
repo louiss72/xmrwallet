@@ -35,6 +35,12 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_import_feather_notes"
+        android:orderInCategory="650"
+        android:title="@string/menu_import_feather_notes"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_subaddresses"
         android:orderInCategory="700"
         android:title="@string/subbaddress_title"
